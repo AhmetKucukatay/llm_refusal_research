@@ -1,8 +1,0 @@
-README.md
-pyproject.toml
-src/refusal_repro/__init__.py
-src/refusal_repro.egg-info/PKG-INFO
-src/refusal_repro.egg-info/SOURCES.txt
-src/refusal_repro.egg-info/dependency_links.txt
-src/refusal_repro.egg-info/requires.txt
-src/refusal_repro.egg-info/top_level.txt
