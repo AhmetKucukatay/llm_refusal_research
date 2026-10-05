@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: refusal-repro
+Version: 0.1.0
+Summary: Reproduction and analysis of refusal-direction methods in language models.
+Requires-Python: <3.12,>=3.11
+Description-Content-Type: text/markdown
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
