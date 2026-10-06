@@ -104,3 +104,70 @@ def gather_token_activations(
     )
 
     return activations[batch_indices, token_indices] #sonra sırayla [0 dan, 1. tokenın hidden dimensionu nu al, 1.den 3. tokenın hidden dimensounun al..] output da batchsize x hidden dimension olur
+
+
+def gather_multiple_token_activations(  #for zhao type of experriments
+    activations: torch.Tensor,
+    token_indices: torch.Tensor,
+) -> torch.Tensor:
+    """Select multiple token activations from each sequence in a batch.
+
+    Args:
+        activations: Activation tensor with shape
+            ``(batch_size, sequence_length, hidden_dim)``.
+        token_indices: Token positions for each sequence, with shape
+            ``(batch_size, num_positions)``.  
+
+    Returns:
+        Selected activation vectors with shape
+        ``(batch_size, num_positions, hidden_dim)``.
+
+    Raises:
+        ValueError: If ``activations`` is not three-dimensional.
+        ValueError: If ``token_indices`` is not two-dimensional.
+        ValueError: If the batch dimensions do not match.
+        ValueError: If no token positions are provided.
+        ValueError: If ``token_indices`` does not use an integer dtype.
+        ValueError: If any token index is outside the sequence bounds.
+    """
+    if activations.ndim != 3:
+        raise ValueError("Activations must be three-dimensional.")
+
+    if token_indices.ndim != 2:
+        raise ValueError("Token indices must be two-dimensional.")
+
+    if activations.shape[0] != token_indices.shape[0]:
+        raise ValueError("Batch size must match the token-index batch size.")
+
+    if token_indices.shape[1] == 0:
+        raise ValueError("At least one token position must be provided.")
+
+    integer_dtypes = {
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+        torch.uint8,
+    }
+
+    if token_indices.dtype not in integer_dtypes:
+        raise ValueError("Token indices must use an integer dtype.")
+
+    sequence_length = activations.shape[1]
+
+    if torch.any(token_indices < 0) or torch.any(
+        token_indices >= sequence_length
+    ):
+        raise ValueError("Token indices must be within the sequence bounds.")
+
+    token_indices = token_indices.to(
+        device=activations.device,
+        dtype=torch.long,
+    )
+
+    batch_indices = torch.arange( #bizim token indicesimiz 2D, her rowda o batchin sampleının hangi tokenlarını alacağımızı belirtiyor, 2 taneyse her rowda iki sayı mesela
+        activations.shape[0],
+        device=activations.device,
+    ).unsqueeze(1)  #önceki fonksiyonla tel fark burada, 2D ouğu için böyle unsequeeze yapmamız lazım ki [[0],[1],[2]] gibi bir shape olsun, sonra broadcasting ile her rowdaki token indices ile eşleşecek
+
+    return activations[batch_indices, token_indices]
