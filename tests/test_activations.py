@@ -1,9 +1,12 @@
 """Tests for activation-selection utilities."""
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
 from refusal_toolkit.activations import (
+    extract_hidden_states,
     gather_multiple_token_activations,
     gather_token_activations,
     get_last_non_padding_token_indices,
@@ -365,4 +368,141 @@ def test_gather_multiple_token_activations_rejects_out_of_bounds_indices(
         gather_multiple_token_activations(
             activations,
             token_indices,
+        )
+
+
+
+
+
+
+
+class _FakeModel:
+    """Minimal model double used to test hidden-state extraction."""
+
+    def __init__(
+        self,
+        *,
+        return_hidden_states: bool = True,
+    ) -> None:
+        """Initialize the fake model."""
+        self.return_hidden_states = return_hidden_states
+        self.last_kwargs: dict[str, object] | None = None
+        self.inference_mode_enabled = False
+
+    def __call__(self, **kwargs: object) -> SimpleNamespace:
+        """Record the forward call and return deterministic model outputs."""
+        self.last_kwargs = kwargs
+        self.inference_mode_enabled = torch.is_inference_mode_enabled()
+
+        if not self.return_hidden_states:
+            return SimpleNamespace(hidden_states=None)
+
+        hidden_states = (
+            torch.zeros((2, 3, 4)),
+            torch.ones((2, 3, 4)),
+            torch.full((2, 3, 4), 2.0),
+        )
+
+        return SimpleNamespace(hidden_states=hidden_states)
+
+
+
+def test_extract_hidden_states_returns_model_hidden_states() -> None:
+    """All hidden states returned by the model should be preserved."""
+    model = _FakeModel()
+
+    input_ids = torch.tensor(
+        [
+            [1, 2, 0],
+            [3, 4, 5],
+        ]
+    )
+    attention_mask = torch.tensor(
+        [
+            [1, 1, 0],
+            [1, 1, 1],
+        ]
+    )
+
+    model_inputs = {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+    }
+
+    hidden_states = extract_hidden_states(
+        model,
+        model_inputs,
+    )
+
+    assert len(hidden_states) == 3
+    assert hidden_states[0].shape == (2, 3, 4)
+
+    torch.testing.assert_close(
+        hidden_states[0],
+        torch.zeros((2, 3, 4)),
+    )
+    torch.testing.assert_close(
+        hidden_states[1],
+        torch.ones((2, 3, 4)),
+    )
+    torch.testing.assert_close(
+        hidden_states[2],
+        torch.full((2, 3, 4), 2.0),
+    )
+
+def test_extract_hidden_states_requests_hidden_states() -> None:
+    """The forward pass should explicitly request hidden states."""
+    model = _FakeModel()
+
+    input_ids = torch.tensor([[1, 2, 3]])
+    attention_mask = torch.tensor([[1, 1, 1]])
+
+    extract_hidden_states(
+        model,
+        {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+        },
+    )
+
+    assert model.last_kwargs is not None
+    assert model.last_kwargs["input_ids"] is input_ids
+    assert model.last_kwargs["attention_mask"] is attention_mask
+    assert model.last_kwargs["output_hidden_states"] is True
+    assert model.last_kwargs["return_dict"] is True
+
+
+def test_extract_hidden_states_uses_inference_mode() -> None:
+    """The model forward pass should run without autograd tracking."""
+    model = _FakeModel()
+
+    extract_hidden_states(
+        model,
+        {
+            "input_ids": torch.tensor([[1, 2]]),
+            "attention_mask": torch.tensor([[1, 1]]),
+        },
+    )
+
+    assert model.inference_mode_enabled is True
+
+
+def test_extract_hidden_states_rejects_empty_inputs() -> None:
+    """At least one model input must be provided."""
+    model = _FakeModel()
+
+    with pytest.raises(ValueError, match="At least one model input"):
+        extract_hidden_states(model, {})
+
+
+def test_extract_hidden_states_rejects_missing_hidden_states() -> None:
+    """Models that do not return hidden states should raise an error."""
+    model = _FakeModel(return_hidden_states=False)
+
+    with pytest.raises(RuntimeError, match="did not return hidden states"):
+        extract_hidden_states(
+            model,
+            {
+                "input_ids": torch.tensor([[1, 2]]),
+            },
         )

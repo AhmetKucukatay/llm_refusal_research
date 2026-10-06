@@ -1,6 +1,9 @@
 """Utilities for selecting and processing model activations."""
 
+from collections.abc import Mapping
+
 import torch
+from transformers import PreTrainedModel
 
 
 def get_last_non_padding_token_indices(
@@ -171,3 +174,44 @@ def gather_multiple_token_activations(  #for zhao type of experriments
     ).unsqueeze(1)  #önceki fonksiyonla tel fark burada, 2D ouğu için böyle unsequeeze yapmamız lazım ki [[0],[1],[2]] gibi bir shape olsun, sonra broadcasting ile her rowdaki token indices ile eşleşecek
 
     return activations[batch_indices, token_indices]
+
+
+
+
+
+def extract_hidden_states(
+    model: PreTrainedModel,
+    model_inputs: Mapping[str, torch.Tensor],  #tokenizationdaki encoded[input_ids], encoded[attention_mask] gibi şeyleri içeriyo
+) -> tuple[torch.Tensor, ...]: #birden fazla pytorch tensor döndürebilir, embedding output, layer 0 output, layer 1 output..
+    """Run a model forward pass and return all hidden states.
+
+    Args:
+        model: Hugging Face model used for the forward pass.
+        model_inputs: Tensor inputs accepted by the model, such as
+            ``input_ids`` and ``attention_mask``.
+
+    Returns:
+        Hidden-state tensors returned by the model. For standard Hugging Face
+        transformer models, the tuple typically contains the embedding output
+        followed by the output of each transformer layer.
+
+    Raises:
+        ValueError: If no model inputs are provided.
+        RuntimeError: If the model does not return hidden states.
+    """
+    if len(model_inputs) == 0:
+        raise ValueError("At least one model input must be provided.")
+
+    with torch.inference_mode():  #do not create gradients, we are just extracting hidden states
+        outputs = model(
+            **model_inputs,  #input id's ve attention mask gibi şeyler içeriyo
+            output_hidden_states=True,  # normalde model bize son layerın logitlerini döndürür, ama biz tüm layerların hidden state'lerini istiyoruz, embedding layer dahil
+            return_dict=True,  #.ıktıyı dictionary olarak döndürür, böylece hidden states e outputs.hidden_states ile ulaşabiliriz, daha readable olur
+        )
+
+    hidden_states = getattr(outputs, "hidden_states", None) #outputs objesinin hidden_states diye bir alanı var mı? varsa direkt outputs.hidden_states olur yoksa None
+
+    if hidden_states is None:
+        raise RuntimeError("Model did not return hidden states.")
+
+    return tuple(hidden_states) #hidden_states = (tensor_0, tensor_1..), her tenson (batch_size, sequence_length, hidden_dimension) şeklinde, embedding layer dahil tüm layerların outputları var
