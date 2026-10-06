@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from refusal_repro.directions import compute_difference_in_means
+from refusal_toolkit.directions import compute_difference_in_means
 
 
 def test_compute_difference_in_means_returns_expected_direction() -> None:
