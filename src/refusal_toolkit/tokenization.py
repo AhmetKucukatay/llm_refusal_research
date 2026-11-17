@@ -42,9 +42,9 @@ def tokenize_texts(
     if max_length is not None and max_length <= 0:
         raise ValueError("max_length must be a positive integer.")
 
-    return tokenizer(  #buranın içinde encoded["input_ids"], encoded["attention_mask"] var, 1.si batchdeki her promptun içindeki tokenlarının idlerini, 2.si hepsinin lengthinin aynı olması için yapılan paddingleri 0, normalleri 1 yapıyo
-        list(texts),
-        padding=padding,
+    return tokenizer(  #this has["input_ids"], encoded["attention_mask"]  
+        list(texts),   #E.g. inputs= "hello" and "hello world"
+        padding=padding, #input_ids = [[15496, Pad], [15496, 995]]  #attention_mask = [[1,0],[1,1]] 0 means padding
         truncation=truncation,
         max_length=max_length,
         return_tensors="pt",
