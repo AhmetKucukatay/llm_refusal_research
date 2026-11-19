@@ -4,6 +4,7 @@ import torch
 from torch import nn
 
 from reproductions.arditi_2024.extraction import (
+    compute_mean_resid_pre_activations,
     extract_resid_pre_activations,
 )
 
@@ -82,3 +83,50 @@ def test_extract_resid_pre_activations() -> None:
 
     assert activations.shape == (2, 2, 2, 1)
     assert torch.equal(activations, expected)
+
+def test_compute_mean_resid_pre_activations() -> None:
+    """Compute the same global mean across multiple batches."""
+    model = ToyModel()
+
+    instructions = ["10", "20", "30", "40", "50"]
+
+    def tokenize_instructions_fn(
+        batch_instructions: list[str],
+    ):
+        input_ids = torch.tensor(
+            [
+                [0, int(instruction)]
+                for instruction in batch_instructions
+            ]
+        )
+
+        return type(
+            "TokenizedBatch",
+            (),
+            {
+                "input_ids": input_ids,
+                "attention_mask": torch.ones_like(input_ids),
+            },
+        )()
+
+    mean_activations = compute_mean_resid_pre_activations(
+        model=model,
+        block_modules=model.blocks,
+        instructions=instructions,
+        tokenize_instructions_fn=tokenize_instructions_fn,
+        positions=[-1],
+        batch_size=2,
+    )
+
+    expected = torch.tensor(
+        [
+            [
+                [30.0],   #layer 0 mean
+                [31.0],   #layer 1 mean
+            ]
+        ],
+        dtype=torch.float64,
+    )
+
+    assert mean_activations.shape == (1, 2, 1) #positions, layers, hidden_dim
+    assert torch.equal(mean_activations, expected) 

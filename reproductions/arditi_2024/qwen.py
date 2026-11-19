@@ -10,6 +10,9 @@ QWEN_CHAT_TEMPLATE = (   #same as in the paper appendix table 6
     "<|im_start|>assistant\n"
 )
 
+# token IDs 40 ("I") and 2121 ("As"). Same with arditis code and appendix
+QWEN_REFUSAL_TOKEN_IDS = (40, 2121)
+
 #with respect to above template, get the post-instructions
 QWEN_POST_INSTRUCTION_SUFFIX = QWEN_CHAT_TEMPLATE.split("{instruction}")[-1] 
 
@@ -22,6 +25,20 @@ def format_qwen_prompt(instruction: str) -> str:
 def format_qwen_prompts(instructions: Sequence[str]) -> list[str]:
     """Format multiple instructions using the paper's Qwen chat template."""
     return [format_qwen_prompt(instruction) for instruction in instructions]
+
+def tokenize_qwen_instructions(
+    tokenizer: PreTrainedTokenizerBase,
+    instructions: Sequence[str],
+):
+    """Format and tokenize Qwen chat instructions as a padded batch."""
+    prompts = format_qwen_prompts(instructions)
+
+    return tokenizer(
+        prompts,
+        padding=True,
+        truncation=False,
+        return_tensors="pt",
+    )
 
 
 def configure_qwen_tokenizer(tokenizer: PreTrainedTokenizerBase) -> None:
