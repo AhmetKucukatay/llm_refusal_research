@@ -1,6 +1,6 @@
 """Activation extraction for the Arditi et al. reproduction."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import torch
 from torch import nn
@@ -80,3 +80,57 @@ def extract_resid_pre_activations( #resid_pre = residual stream activations befo
         ],
         dim=2,
     )
+# N instructions-> batch batch tokenzie-> extract_resid_pre_activation-> for qwen each batch [B,5,24,2048] -> sum on sample dimension-> global mean -> [5,24,2048]
+def compute_mean_resid_pre_activations(
+    model: nn.Module,
+    block_modules: Sequence[nn.Module],
+    instructions: Sequence[str],
+    tokenize_instructions_fn: Callable,
+    positions: Sequence[int],
+    batch_size: int = 32,
+    device: torch.device | str | None = None,
+) -> torch.Tensor:
+    """Compute mean resid_pre activations over a set of instructions."""
+    if len(instructions) == 0:
+        raise ValueError("At least one instruction must be provided.")
+
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive.")
+
+    n_samples = len(instructions)
+
+    mean_activations = None
+
+    for start in range(0, n_samples, batch_size):
+        batch_instructions = instructions[start : start + batch_size] #create batches
+        inputs = tokenize_instructions_fn(batch_instructions)  #tokenize batches
+
+        input_ids = inputs.input_ids
+        attention_mask = inputs.attention_mask
+
+        if device is not None:
+            input_ids = input_ids.to(device)
+            attention_mask = attention_mask.to(device)
+
+        batch_activations = extract_resid_pre_activations(
+            model=model,
+            block_modules=block_modules,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            positions=positions,
+        )
+        batch_sum = batch_activations.to(torch.float64).sum(dim=0)
+
+        #first batch extraction-> sum(dim=0) -> [P,L,D] -> this weill be mean tensors shape. 
+        #this part is neccesary because now function does not depend on model.confix-hidden_size which is for HF
+        if mean_activations is None:
+            mean_activations = torch.zeros_like(batch_sum)
+        # Accumulate in float64, matching the released implementation's
+        # high-precision mean activation cache.
+        mean_activations += (
+            batch_activations.to(torch.float64).sum(dim=0) / n_samples
+        )
+
+    if mean_activations is None:
+        raise RuntimeError("Failed to compute mean activations.")
+    return mean_activations

@@ -1,6 +1,9 @@
 # Virtual environment
 .venv*/
 
+# Reproduction datasets are downloaded from their original sources.
+data/*/splits/*.json
+
 # Python cache / compiled files
 __pycache__/
 *.py[cod]
