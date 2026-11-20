@@ -1,10 +1,13 @@
 """Tests for Arditi refusal scoring and filtering."""
 
 import math
+from collections.abc import Sequence
+from types import SimpleNamespace
 
 import torch
 from torch import nn
 
+from refusal_toolkit.interventions import make_direction_ablation_pre_hook
 from reproductions.arditi_2024.refusal import (
     compute_refusal_log_odds,
     compute_refusal_scores,
@@ -135,3 +138,79 @@ def test_compute_refusal_scores() -> None:
     assert scores[0] > 0
     assert scores[1] < 0
     assert scores[2] > 0
+
+class ToyInterventionRefusalModel(nn.Module):
+    """Toy model whose refusal logits can be changed by a hook."""
+
+    def __init__(self) -> None:
+        """Initialize the intervention point."""
+        super().__init__()
+        self.block = nn.Identity()
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ):
+        """Produce logits from a hookable hidden representation."""
+        del attention_mask
+
+        values = input_ids.to(torch.float32)
+
+        hidden = torch.stack(
+            [
+                values,
+                torch.zeros_like(values),
+            ],
+            dim=-1,
+        )
+
+        hidden = self.block(hidden)
+
+        zeros = torch.zeros_like(hidden[..., :1])
+
+        logits = torch.cat(
+            [
+                hidden,
+                zeros,
+            ],
+            dim=-1,
+        )
+
+        return SimpleNamespace(logits=logits)
+
+def test_refusal_score_changes_under_ablation_hook() -> None:
+    """Ablating the refusal dimension lowers the refusal score."""
+    model = ToyInterventionRefusalModel()
+
+    def tokenize(instructions: Sequence[str]):
+        values = torch.tensor(
+            [[int(instruction)] for instruction in instructions]
+        )
+
+        return SimpleNamespace(
+            input_ids=values,
+            attention_mask=torch.ones_like(values),
+        )
+
+    baseline_scores = compute_refusal_scores(
+        model=model,
+        instructions=["3"],
+        tokenize_instructions_fn=tokenize,
+        refusal_token_ids=[0],
+    )
+
+    direction = torch.tensor([1.0, 0.0])
+    hook = make_direction_ablation_pre_hook(direction)
+
+    ablated_scores = compute_refusal_scores(
+        model=model,
+        instructions=["3"],
+        tokenize_instructions_fn=tokenize,
+        refusal_token_ids=[0],
+        pre_hooks=[(model.block, hook)],
+    )
+
+    assert baseline_scores.item() > 0.0
+    assert ablated_scores.item() < 0.0
+    assert ablated_scores.item() < baseline_scores.item()

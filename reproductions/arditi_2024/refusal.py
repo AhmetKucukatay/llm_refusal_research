@@ -5,6 +5,8 @@ from collections.abc import Callable, Sequence
 import torch
 from torch import nn
 
+from refusal_toolkit.evaluation import collect_last_token_logits
+
 
 def compute_refusal_log_odds(
     logits: torch.Tensor,
@@ -15,7 +17,14 @@ def compute_refusal_log_odds(
     # Refusal is measured from the model's next-token distribution.
     # #we are getting last token logits to predict what should be the next token which will be the first token of the response
     #shape = (batch_size, vocab_size), for every batchs last token we have a vector of logits for every token in the vocab
-    last_token_logits = logits[:, -1, :].to(torch.float64)
+    if logits.ndim == 3:
+        last_token_logits = logits[:, -1, :]
+    elif logits.ndim == 2:
+        last_token_logits = logits
+    else:
+        raise ValueError("logits must have shape [batch, seq, vocab] or [batch, vocab]")
+
+    last_token_logits = last_token_logits.to(torch.float64)
 
     probabilities = torch.softmax(last_token_logits, dim=-1)  #then past these to softmax to get probabilities
 
@@ -32,35 +41,27 @@ def compute_refusal_scores(
     instructions: Sequence[str],
     tokenize_instructions_fn: Callable,
     refusal_token_ids: Sequence[int],
+    *,
+    pre_hooks: Sequence[tuple[nn.Module, Callable]] = (),
+    output_hooks: Sequence[tuple[nn.Module, Callable]] = (),
     batch_size: int = 32,
+    device: torch.device | str | None = None,
 ) -> torch.Tensor:
-    """Compute one baseline refusal score per instruction."""
-    if len(instructions) == 0:
-        raise ValueError("At least one instruction must be provided.")
+    """Compute refusal scores with optional activation interventions."""
+    last_token_logits = collect_last_token_logits(
+        model=model,
+        instructions=instructions,
+        tokenize_instructions_fn=tokenize_instructions_fn,
+        pre_hooks=pre_hooks,
+        output_hooks=output_hooks,
+        batch_size=batch_size,
+        device=device,
+    )
 
-    if batch_size <= 0:
-        raise ValueError("batch_size must be positive.")
-
-    score_batches: list[torch.Tensor] = []
-
-    for start in range(0, len(instructions), batch_size):
-        batch_instructions = instructions[start : start + batch_size]
-        inputs = tokenize_instructions_fn(batch_instructions)
-
-        with torch.inference_mode():
-            logits = model(  #forward for passing logits to compute refusal log-odds function
-                input_ids=inputs.input_ids.to(model.device),
-                attention_mask=inputs.attention_mask.to(model.device),
-            ).logits
-
-        batch_scores = compute_refusal_log_odds(
-            logits=logits,
-            refusal_token_ids=refusal_token_ids,
-        )
-
-        score_batches.append(batch_scores)
-
-    return torch.cat(score_batches, dim=0) #for each instruction we have a refusal score
+    return compute_refusal_log_odds(
+        last_token_logits,
+        refusal_token_ids,
+    )
 
 def filter_instructions_by_refusal(
     instructions: Sequence[str],

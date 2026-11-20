@@ -16,6 +16,10 @@ SPLIT_FILENAMES = (
 
 DEFAULT_OUTPUT_DIR = Path("data/arditi_2024/splits")
 
+PROCESSED_FILES = (  #test/evaluation
+    "jailbreakbench.json",
+)
+
 
 def fetch_arditi_splits(
     output_dir: Path = DEFAULT_OUTPUT_DIR,
@@ -39,6 +43,22 @@ def fetch_arditi_splits(
             destination.write_bytes(response.read())
 
     print(f"Saved dataset splits to {output_dir}")
+
+    processed_dir = Path("data/arditi_2024/processed")
+    processed_dir.mkdir(parents=True, exist_ok=True)
+
+    for filename in PROCESSED_FILES:
+        url = (
+            "https://raw.githubusercontent.com/"
+            f"andyrdt/refusal_direction/{ARDITI_COMMIT}/"
+            f"dataset/processed/{filename}"
+        )
+
+        destination = processed_dir / filename
+
+        print(f"Downloading {filename}...")
+        with urlopen(url) as response:
+            destination.write_bytes(response.read())
 
 
 if __name__ == "__main__":
