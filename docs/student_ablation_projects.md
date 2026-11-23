@@ -11,7 +11,7 @@ The four proposed projects are:
 | Project | Research question | Difficulty |
 |---|---|---|
 | 1. Selection-constraint ablation | Which parts of Arditi's direction-selection procedure are actually necessary? | Low |
-| 2. Token-position ablation | Why do useful refusal directions concentrate at specific post-instruction tokens? | Low–Medium |
+| 2. Global vs. local intervention | Does Arditi's refusal direction need to be ablated throughout the whole network, or is the causal effect localized to specific layers/components? | Low–Medium |
 | 3. Matched contrastive pairs | Does Ball-style matched harmful/harmless data produce a cleaner refusal direction than Arditi-style independent datasets? | Medium |
 | 4. MLP localization | Is Arditi's global refusal direction concentrated in a small number of MLP neurons? | Medium–High |
 
@@ -733,153 +733,229 @@ The project is complete when it can answer:
 
 ---
 
-# 8. Project 2 — Token-Position Ablation
+# 8. Project 2 — Global vs. Local Refusal Intervention
 
 ## Research question
 
-**How dependent is the refusal direction on the post-instruction token from which it is extracted?**
+**Does Arditi's refusal direction need to be removed throughout the whole transformer, or is most of its causal effect localized to a small set of layers or components?**
 
-Our Qwen reproduction considers:
-
-```text
--5   <|im_end|>
--4   \n
--3   <|im_start|>
--2   assistant
--1   \n
-```
-
-A striking observation from our existing run is:
+The existing reproduction identifies the selected refusal direction from:
 
 ```text
-eligible candidates by position
-
--5 → 0
--4 → 2
--3 → 0
--2 → 5
--1 → 5
+position = -2
+source layer = 15
 ```
 
-Thus the best causal directions appear concentrated near the assistant-generation boundary rather than uniformly across the chat-template suffix.
+However, finding the direction at layer 15 does **not** mean that intervening only at layer 15 is sufficient.
 
-The Apple paper independently observes that its refusal neurons frequently become active around the assistant-turn boundary on harmful prompts.
+In the reproduced Arditi implementation, the same selected direction is projected out at many locations throughout the network:
 
-This project tests whether that boundary localization can be seen directly in the Arditi direction.
+```text
+24 transformer-block residual inputs
+24 attention outputs
+24 MLP outputs
+```
+
+for a total of 72 intervention hooks.
+
+This project keeps the refusal direction completely fixed and changes only **where the intervention is applied**.
+
+This distinguishes two questions:
+
+```text
+Where is the refusal direction discovered?
+            ≠
+Where must we intervene to change refusal behavior?
+```
+
+The first question has already been answered by the reproduction.
+
+This project investigates the second.
 
 ---
 
-## Primary experiment
+## Why this experiment is interesting
 
-Fix the source layer:
+Arditi uses a global intervention: the refusal direction is continuously removed throughout the network.
 
-```text
-layer = 15
-```
+A newer line of work, including the Apple single-neuron paper, asks whether safety behavior may instead depend on much more localized causal bottlenecks.
 
-This is the layer selected by the original reproduction.
+Therefore, before going all the way down to individual neurons, we can ask a simpler question:
 
-Change only the extraction position.
+> Can most of the Arditi effect be reproduced by intervening only in a small part of the network?
 
-Evaluate:
-
-```text
-direction(-5, 15)
-direction(-4, 15)
-direction(-3, 15)
-direction(-2, 15)
-direction(-1, 15)
-```
-
-This is important: **do not allow each token position to choose its own best layer in the primary experiment**.
-
-Otherwise token position and layer become confounded.
+This provides a natural bridge between the Arditi reproduction and the MLP-localization project.
 
 ---
 
-## Why this experiment is especially cheap
+## Fixed quantities
 
-The existing candidate tensor already has shape:
+The experiment must use the exact same selected direction for every condition:
 
 ```text
-[5, 24, 2048]
+position = -2
+source layer = 15
+direction = existing selected_direction.pt
 ```
 
-Therefore, if the artifact is available, no activation extraction is necessary.
+Do **not** recompute or reselect the direction separately for different conditions.
 
-The five directions can be read directly from the existing candidate tensor.
+The only experimental variable is:
+
+```text
+where directional ablation is applied
+```
+
+---
+
+## Experiment A — Layer locality
+
+Compare the following intervention scopes.
+
+### A1. Original Arditi intervention
+
+Ablate the direction throughout all layers using the existing implementation.
+
+This is the baseline.
+
+```text
+all 24 layers
+residual input + attention output + MLP output
+```
+
+### A2. Selected layer only
+
+Apply the same direction only at layer 15:
+
+```text
+layer 15 only
+residual input + attention output + MLP output
+```
+
+### A3. Local middle-layer window
+
+Apply the direction only around the selected layer:
+
+```text
+layers 14, 15, 16
+```
+
+again using the same three intervention sites.
+
+### A4. Control window
+
+Use an equally sized window far from the selected layer, for example:
+
+```text
+layers 5, 6, 7
+```
+
+This controls for the possibility that any three-layer intervention would have a similar effect.
+
+The exact control window should be fixed before looking at results.
+
+---
+
+## Experiment B — Component locality
+
+Keep all layers active, but change which transformer component receives the intervention.
+
+Compare:
+
+```text
+B1. residual/block-input hooks only
+B2. attention-output hooks only
+B3. MLP-output hooks only
+B4. original combination of all three
+```
+
+This asks whether one pathway accounts for most of the behavioral effect.
+
+For example, if:
+
+```text
+MLP-only ≈ full intervention
+attention-only << full intervention
+```
+
+that would suggest that the MLP pathway carries most of the causal effect of the refusal direction.
+
+If all three partial interventions are weak but their combination is strong, the direction may instead need to be continuously removed as it propagates through the network.
 
 ---
 
 ## Measurements
 
-For each position, calculate:
+Use the same evaluation pipeline as the original reproduction.
+
+At minimum report:
 
 ```text
-harmful ablation refusal score
-harmless steering refusal score
-harmless ablation KL
+harmful refusal suppression
+harmless behavior / collateral effect
+harmless KL divergence where applicable
 ```
 
-Then run held-out behavior with the same intervention settings.
+For the final behavioral evaluation, use the same harmful held-out set and generation settings as the original Arditi reproduction.
 
-Recommended plots:
+A useful summary table is:
 
-```text
-token position vs harmful ablation score
-token position vs positive steering score
-token position vs KL
-token position vs held-out harmful effect
-```
-
-The x-axis should contain the actual token label, not only `-5`, `-4`, etc.
-
-For example:
-
-```text
-<|im_end|>
-newline
-<|im_start|>
-assistant
-newline
-```
+| Intervention | Layers | Components | Harmful effect | Harmless effect | KL |
+|---|---|---|---:|---:|---:|
+| Original | all | residual + attn + MLP | | | |
+| Layer 15 | 15 | residual + attn + MLP | | | |
+| Local window | 14–16 | residual + attn + MLP | | | |
+| Control window | 5–7 | residual + attn + MLP | | | |
+| Residual only | all | residual | | | |
+| Attention only | all | attention | | | |
+| MLP only | all | MLP | | | |
 
 ---
 
 ## Existing code to reuse
 
-Candidate tensor:
+The generic directional ablation operation already exists in:
 
 ```text
-candidate_directions.pt
+src/refusal_toolkit/interventions.py
 ```
 
-Evaluation:
+Reuse:
 
 ```python
-from reproductions.arditi_2024.selection import evaluate_candidate
+ablate_direction(...)
+temporary_hooks(...)
 ```
 
-Qwen token identification:
+The existing Qwen-specific Arditi hook wiring is in:
 
-```python
-from reproductions.arditi_2024.qwen import (
-    get_qwen_post_instruction_token_ids,
-)
+```text
+reproductions/arditi_2024/interventions.py
 ```
 
-Behavioral intervention:
+The original full intervention is created using:
 
 ```python
 get_qwen_ablation_hooks(...)
-get_qwen_addition_hooks(...)
 ```
 
-Generation:
+The existing implementation should remain unchanged and should be used as the full-intervention baseline.
 
-```python
-generate_completions(...)
+The selected direction should be loaded from the existing artifact:
+
+```text
+artifacts/arditi_2024/qwen-1_8b-chat/selected_direction.pt
 ```
+
+Reuse the existing generation and evaluation utilities:
+
+```text
+src/refusal_toolkit/generation.py
+src/refusal_toolkit/evaluation.py
+reproductions/arditi_2024/refusal.py
+```
+
+Do not rewrite refusal scoring or generation.
 
 ---
 
@@ -888,44 +964,121 @@ generate_completions(...)
 Create:
 
 ```text
-reproductions/arditi_2024/ablations/token_position/
+reproductions/arditi_2024/ablations/intervention_scope/
 ├── __init__.py
+├── hooks.py
 ├── run.py
 └── analysis.py
 ```
 
-No modification to `selection.py` should be necessary.
+The main new functionality should be in `hooks.py`.
+
+It should allow the caller to specify something conceptually like:
+
+```python
+layers=[14, 15, 16]
+use_residual=True
+use_attention=True
+use_mlp=True
+```
+
+and construct only the requested hooks.
+
+Do **not** modify the original:
+
+```text
+reproductions/arditi_2024/interventions.py
+```
+
+just to support this ablation.
+
+The original reproduction should remain intact.
 
 ---
 
-## Optional extension
+## Tests
 
-Only after the fixed-layer experiment is finished:
+Add reproduction-specific tests for the new selective hook construction.
+
+At minimum verify that:
 
 ```text
-positions × layers 13–18
+requested layers receive hooks
+unrequested layers do not receive hooks
+requested component types receive hooks
+unrequested component types do not receive hooks
+all hooks are removed after the context exits
 ```
 
-can be plotted as a small heatmap.
-
-Do not immediately search all layers for the best token-specific configuration, because that changes the experiment from an ablation into another selection procedure.
+These tests should use small/mock modules where possible and should not require loading the full Qwen model.
 
 ---
 
-## Main interpretation question
+## Main pitfalls
 
-If `assistant` and the final newline are much stronger than the structural boundary tokens:
+### Do not change the direction
+
+Every condition must use exactly the same refusal direction.
+
+Otherwise the experiment would mix:
 
 ```text
-<|im_end|>
-<|im_start|>
+direction selection
++
+intervention location
 ```
 
-then the result supports the idea that the refusal representation becomes causally actionable around the transition into assistant generation.
+and become difficult to interpret.
 
-It does **not** prove that refusal is computed only at those tokens.
+### Do not tune layer windows on the test set
 
-The claim must remain local to this model and experiment.
+Do not try many windows and report the one with the strongest JailbreakBench result.
+
+The required windows should be fixed in advance.
+
+### Do not leave hooks registered
+
+A hook left active from a previous condition will contaminate the next experiment.
+
+Use the existing controlled hook-removal utilities.
+
+### Do not interpret source layer as causal layer
+
+Layer 15 is where the selected contrastive direction was extracted.
+
+It is not automatically the only layer where the direction causally matters.
+
+Determining this is the purpose of the experiment.
+
+---
+
+## Possible outcomes
+
+### Local intervention is almost as strong as global intervention
+
+For example:
+
+```text
+layers 14–16 ≈ full Arditi
+```
+
+This would suggest that the causal role of the refusal direction is concentrated in a relatively local region of the network.
+
+### Only the full intervention works
+
+This would suggest that although the direction is identifiable at layer 15, it must be continuously removed as the representation propagates through later computation.
+
+### MLP-only intervention dominates
+
+This would motivate the next project particularly strongly:
+
+> Which MLP neurons implement this direction?
+
+### Attention-only intervention dominates
+
+This would instead suggest that the attention pathway is more important than expected.
+
+All of these outcomes are scientifically useful.
 
 ---
 
@@ -933,9 +1086,7 @@ The claim must remain local to this model and experiment.
 
 The project should answer:
 
-> Holding the layer fixed, how strongly does the causal quality of the refusal direction depend on the exact post-instruction token?
-
----
+> Holding the refusal direction fixed, how much of Arditi's behavioral effect can be reproduced when directional ablation is restricted to particular layers or transformer components?
 
 # 9. Project 3 — Arditi Random Contrasts vs. Ball-Style Matched Contrasts
 
