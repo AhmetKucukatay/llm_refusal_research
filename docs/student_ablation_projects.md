@@ -1,4 +1,3 @@
-<img width="661" height="170" alt="image" src="https://github.com/user-attachments/assets/4101863a-e490-4fb3-9b40-f66be533a260" /># Student Ablation Projects on Refusal Mechanisms
 
 ## 1. Purpose
 
