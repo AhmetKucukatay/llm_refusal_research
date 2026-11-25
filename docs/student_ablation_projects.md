@@ -1497,15 +1497,15 @@ At this layer, every MLP intermediate neuron writes back into the residual strea
 
 Each neuron therefore has an associated residual-space write vector:
 
-\[
-w_i \in R^{d_{\text{model}}}.
-\]
+$$
+w_i \in \mathbb{R}^{d_{\text{model}}}
+$$
 
 The first experiment asks:
 
-\[
+$$
 \cos(w_i,r)
-\]
+$$
 
 for every neuron.
 
